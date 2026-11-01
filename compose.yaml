@@ -1,6 +1,7 @@
 services:
   mirror:
-    image: registry.cn-hangzhou.aliyuncs.com/sxxpqp/opskit-mirror:${MIRROR_VERSION:?Set MIRROR_VERSION to a published commit SHA or version tag}
+    image: registry.cn-hangzhou.aliyuncs.com/sxxpqp/opskit-mirror:${MIRROR_VERSION:-latest}
+    pull_policy: always
     environment:
       MIRROR_LISTEN: ${MIRROR_LISTEN:-:8080}
       MIRROR_DOCKERHUB_USERNAME: ${MIRROR_DOCKERHUB_USERNAME:-}
