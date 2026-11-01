@@ -187,7 +187,7 @@ func main() {
 		log.Fatal(err)
 	}
 	if c.Listen == "" {
-		c.Listen = "127.0.0.1:8080"
+		c.Listen = ":8080"
 	}
 	if len(c.Registries) == 0 {
 		log.Fatal("registries required")
