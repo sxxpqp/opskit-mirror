@@ -90,3 +90,21 @@ registries:
 ```
 
 DOCKERHUB_TOKEN 环境变量填写 Docker Hub 只读访问令牌，不把真实凭据提交到仓库。Compose 从宿主环境或 .env 读取该变量；本机运行先 export。用户名和 password_env 必须成对配置，令牌为空启动失败。固定账号仅用于白名单 token 端点并覆盖客户端凭据，不发送给镜像层 CDN。该账号可访问的私有镜像可能被代理使用者获取，启用前必须限制 Nginx/网络访问。否则省略这两个字段，由客户端提供认证；私有镜像仍需实测。
+
+## 无挂载与环境变量配置
+
+config.example.yaml 编译内置，直接运行无需挂载；显式 --config 指定文件不存在会报错。优先级：内置默认 < 显式 YAML < 环境变量；YAML registries 若提供，则替换默认仓库集合。不会自动读取工作目录 config.yaml。
+
+```sh
+MIRROR_LISTEN=:8080 MIRROR_DOCKERHUB_USERNAME=your-user MIRROR_DOCKERHUB_PASSWORD=your-token ./opskit-mirror
+```
+
+Compose 默认无需配置文件。可在 .env 设置 MIRROR_DOCKERHUB_USERNAME、MIRROR_DOCKERHUB_PASSWORD；匿名访问两者留空。MIRROR_VERSION 仍必须显式填写。要挂载 YAML，取消 compose.yaml 的 command 和 volumes 注释。
+
+所有仓库支持 MIRROR_<仓库名大写>_UPSTREAM、USERNAME、PASSWORD、PASSWORD_ENV、AUTH_HOSTS、REDIRECT_HOSTS；列表用逗号分隔。PASSWORD 为直接凭据环境变量；PASSWORD_ENV 指向另一个环境变量，二者同时存在时 PASSWORD 优先。环境变量只覆盖已配置仓库，不隐式创建新仓库。容器使用额外变量时需在 Compose environment 显式传入，或 docker run -e。
+
+固定账号权限对代理使用者共享，公网必须限制入口。
+
+## 日志
+
+访问日志为 JSON：request_id、registry、operation（token/manifest/blob）、method、status、bytes、duration_ms、result。上游失败日志关联相同 request_id；响应头返回 X-Request-ID。客户端取消单独标记，不输出 Authorization、token、密码、完整查询参数或签名下载地址。健康检查不记录访问日志。启动/配置错误另有进程日志。日志记录本次传输字节，不代表镜像总大小或固定百分比；Docker/containerd 实际拉取仍需联调。

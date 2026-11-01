@@ -1,11 +1,13 @@
 package main
 
 import (
+	_ "embed"
 	"encoding/base64"
 	"flag"
 	"fmt"
 	"gopkg.in/yaml.v3"
 	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -13,6 +15,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -168,26 +171,20 @@ func (m *mirror) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return nil
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, e error) {
-			log.Printf("upstream failed registry=%s: %T", name, e)
+			slog.Error("upstream_failed", "request_id", r.Header.Get("X-Request-ID"), "registry", name, "error_type", fmt.Sprintf("%T", e))
 			http.Error(w, "upstream unavailable", 502)
 		},
 	}
 	proxy.ServeHTTP(w, r)
 }
 func main() {
-	config := flag.String("config", "config.yaml", "configuration file")
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
+	config := flag.String("config", "", "optional YAML file; defaults to embedded config.example.yaml")
 	check := flag.Bool("check", false, "validate configuration and exit")
 	flag.Parse()
-	data, err := os.ReadFile(*config)
+	c, err := loadConfig(*config)
 	if err != nil {
 		log.Fatal(err)
-	}
-	var c Config
-	if err = yaml.Unmarshal(data, &c); err != nil {
-		log.Fatal(err)
-	}
-	if c.Listen == "" {
-		c.Listen = ":8080"
 	}
 	if len(c.Registries) == 0 {
 		log.Fatal("registries required")
@@ -209,7 +206,135 @@ func main() {
 		return
 	}
 	t := &http.Transport{Proxy: http.ProxyFromEnvironment, DialContext: (&net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}).DialContext, ForceAttemptHTTP2: true, MaxIdleConns: 100, MaxIdleConnsPerHost: 20, IdleConnTimeout: 90 * time.Second, TLSHandshakeTimeout: 10 * time.Second, ResponseHeaderTimeout: 900 * time.Second, DisableCompression: true}
-	s := &http.Server{Addr: c.Listen, Handler: &mirror{c, t}, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 90 * time.Second}
+	s := &http.Server{Addr: c.Listen, Handler: accessLog(&mirror{c, t}), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 90 * time.Second}
 	log.Printf("opskit-mirror listening on %s (no disk cache)", c.Listen)
 	log.Fatal(s.ListenAndServe())
+}
+
+//go:embed config.example.yaml
+var defaultConfig []byte
+
+// Precedence: embedded defaults < explicit YAML < environment.
+func loadConfig(path string) (Config, error) {
+	var c Config
+	if err := yaml.Unmarshal(defaultConfig, &c); err != nil {
+		return c, err
+	}
+	if path != "" {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return c, err
+		}
+		var file Config
+		if err := yaml.Unmarshal(data, &file); err != nil {
+			return c, err
+		}
+		if file.Listen != "" {
+			c.Listen = file.Listen
+		}
+		if file.Registries != nil {
+			c.Registries = file.Registries
+		}
+	}
+	if value, ok := os.LookupEnv("MIRROR_LISTEN"); ok {
+		c.Listen = value
+	}
+	for name, reg := range c.Registries {
+		prefix := "MIRROR_" + strings.ToUpper(strings.ReplaceAll(name, "-", "_")) + "_"
+		for key, dst := range map[string]*string{"UPSTREAM": &reg.Upstream, "USERNAME": &reg.Username, "PASSWORD_ENV": &reg.PasswordEnv} {
+			if value, ok := os.LookupEnv(prefix + key); ok {
+				*dst = value
+			}
+		}
+		for key, dst := range map[string]*[]string{"AUTH_HOSTS": &reg.AuthHosts, "REDIRECT_HOSTS": &reg.RedirectHosts} {
+			if value, ok := os.LookupEnv(prefix + key); ok {
+				*dst = nil
+				for _, host := range strings.Split(value, ",") {
+					if host = strings.TrimSpace(host); host != "" {
+						*dst = append(*dst, host)
+					}
+				}
+			}
+		}
+		// A direct password/token environment variable needs no password_env setting.
+		if value, ok := os.LookupEnv(prefix + "PASSWORD"); ok && (value != "" || reg.Username != "") {
+			reg.PasswordEnv = prefix + "PASSWORD"
+		}
+		c.Registries[name] = reg
+	}
+	if c.Listen == "" {
+		return c, fmt.Errorf("listen must not be empty")
+	}
+	return c, nil
+}
+
+var requestSequence atomic.Uint64
+
+type accessWriter struct {
+	http.ResponseWriter
+	status int
+	bytes  int64
+}
+
+func (w *accessWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+func (w *accessWriter) WriteHeader(code int) {
+	if w.status == 0 {
+		w.status = code
+		w.ResponseWriter.WriteHeader(code)
+	}
+}
+func (w *accessWriter) Write(p []byte) (int, error) {
+	if w.status == 0 {
+		w.WriteHeader(200)
+	}
+	n, err := w.ResponseWriter.Write(p)
+	w.bytes += int64(n)
+	return n, err
+}
+func accessLog(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/healthz" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		start := time.Now()
+		id := fmt.Sprintf("%x-%x", start.UnixNano(), requestSequence.Add(1))
+		r.Header.Set("X-Request-ID", id)
+		w.Header().Set("X-Request-ID", id)
+		registry, operation := "dockerhub", "registry"
+		if strings.HasPrefix(r.URL.Path, "/auth/") {
+			operation = "token"
+			parts := strings.Split(r.URL.Path, "/")
+			if len(parts) > 2 {
+				registry = parts[2]
+			}
+		} else if strings.HasPrefix(r.URL.Path, "/v2/") {
+			parts := strings.SplitN(strings.TrimPrefix(r.URL.Path, "/v2/"), "/", 2)
+			if len(parts) == 2 {
+				if m, ok := next.(*mirror); ok {
+					if _, exists := m.config.Registries[parts[0]]; exists {
+						registry = parts[0]
+					}
+				}
+			}
+			if strings.Contains(r.URL.Path, "/blobs/") {
+				operation = "blob"
+			} else if strings.Contains(r.URL.Path, "/manifests/") {
+				operation = "manifest"
+			}
+		}
+		out := &accessWriter{ResponseWriter: w}
+		next.ServeHTTP(out, r)
+		if out.status == 0 {
+			out.status = 200
+		}
+		result := "ok"
+		if out.status >= 400 {
+			result = "error"
+		}
+		if r.Context().Err() != nil {
+			result = "client_canceled"
+		}
+		slog.Info("request_completed", "request_id", id, "registry", registry, "operation", operation, "method", r.Method, "status", out.status, "bytes", out.bytes, "duration_ms", time.Since(start).Milliseconds(), "result", result)
+	})
 }

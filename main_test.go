@@ -44,3 +44,21 @@ func TestDenyAuthAndWrites(t *testing.T) {
 		}
 	}
 }
+
+func TestConfigDefaultsAndEnvironment(t *testing.T) {
+	t.Setenv("MIRROR_LISTEN", ":9090")
+	t.Setenv("MIRROR_DOCKERHUB_USERNAME", "test-user")
+	t.Setenv("MIRROR_DOCKERHUB_PASSWORD", "test-token")
+	t.Setenv("MIRROR_DOCKERHUB_REDIRECT_HOSTS", "one.example, two.example")
+	c, err := loadConfig("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := c.Registries["dockerhub"]
+	if c.Listen != ":9090" || r.Username != "test-user" || r.PasswordEnv != "MIRROR_DOCKERHUB_PASSWORD" || len(r.RedirectHosts) != 2 {
+		t.Fatalf("overrides failed")
+	}
+	if _, err := loadConfig("missing-config.yaml"); err == nil {
+		t.Fatal("explicit missing file should fail")
+	}
+}
