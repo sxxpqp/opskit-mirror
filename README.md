@@ -7,14 +7,14 @@ Go 纯镜像转发服务，无磁盘镜像缓存。公网域名仅在 Nginx 配�
 Go 1.26.2：
 
 ```sh
-cp config.example.json config.json
-go run . --config config.json --check
-go run . --config config.json
+cp config.example.yaml config.yaml
+go run . --config config.yaml --check
+go run . --config config.yaml
 ```
 
 默认监听 127.0.0.1:8080。/healthz 仅表示进程存活。
 
-Docker Compose：将 config.json 的 listen 改为 :8080，宿主机仍仅发布到本机。
+Docker Compose：将 config.yaml 的 listen 改为 :8080，宿主机仍仅发布到本机。
 
 ```sh
 export MIRROR_VERSION=<已发布的完整commit-SHA或版本标签>
@@ -60,7 +60,7 @@ Docker 使用域名根地址，registry-mirrors 主要用于 Docker Hub。
 
 ## 登录边界
 
-提供 Bearer 鉴权转发，不配置共享上游账号。镜像 API 不透传 Basic 凭据，认证端点只允许配置的 auth_hosts。docker login docker.io 与 docker login hub.sxxpqp.top 是不同身份，不能承诺 mirror 自动继承私有凭据；Docker 登录、私有镜像、Kubernetes imagePullSecrets 需分别上线实测。
+提供 Bearer 鉴权转发，默认不配置共享上游账号。镜像 API 不透传 Basic 凭据，认证端点只允许配置的 auth_hosts。docker login docker.io 与 docker login hub.sxxpqp.top 是不同身份，不能承诺 mirror 自动继承私有凭据；Docker 登录、私有镜像、Kubernetes imagePullSecrets 需分别上线实测。
 
 Nginx/防火墙限制访问；Go 没有内置用户管理。无整层内存缓冲和磁盘缓存，正常网络缓冲仍存在。上游响应头超时 900 秒，下载无固定总时限，客户端断开取消上游。日志不输出凭据及签名 URL。
 
@@ -76,3 +76,17 @@ go vet ./...
 ```
 
 单元测试使用模拟上游，不等同真实上游、Nginx、Docker/containerd 验证。
+
+### 可选 Docker Hub 固定账号
+
+```yaml
+registries:
+  dockerhub:
+    upstream: https://registry-1.docker.io
+    username: your-dockerhub-user
+    password_env: DOCKERHUB_TOKEN
+    auth_hosts: [auth.docker.io]
+    redirect_hosts: [production.cloudflare.docker.com, production.cloudfront.docker.com]
+```
+
+DOCKERHUB_TOKEN 环境变量填写 Docker Hub 只读访问令牌，不把真实凭据提交到仓库。Compose 从宿主环境或 .env 读取该变量；本机运行先 export。用户名和 password_env 必须成对配置，令牌为空启动失败。固定账号仅用于白名单 token 端点并覆盖客户端凭据，不发送给镜像层 CDN。该账号可访问的私有镜像可能被代理使用者获取，启用前必须限制 Nginx/网络访问。否则省略这两个字段，由客户端提供认证；私有镜像仍需实测。

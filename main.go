@@ -2,9 +2,9 @@ package main
 
 import (
 	"encoding/base64"
-	"encoding/json"
 	"flag"
 	"fmt"
+	"gopkg.in/yaml.v3"
 	"log"
 	"net"
 	"net/http"
@@ -17,13 +17,15 @@ import (
 )
 
 type Registry struct {
-	Upstream      string   `json:"upstream"`
-	AuthHosts     []string `json:"auth_hosts"`
-	RedirectHosts []string `json:"redirect_hosts"`
+	Username      string   `yaml:"username"`
+	PasswordEnv   string   `yaml:"password_env"`
+	Upstream      string   `yaml:"upstream"`
+	AuthHosts     []string `yaml:"auth_hosts"`
+	RedirectHosts []string `yaml:"redirect_hosts"`
 }
 type Config struct {
-	Listen     string              `json:"listen"`
-	Registries map[string]Registry `json:"registries"`
+	Listen     string              `yaml:"listen"`
+	Registries map[string]Registry `yaml:"registries"`
 }
 type mirror struct {
 	config    Config
@@ -107,6 +109,9 @@ func (m *mirror) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			p.Out.Header.Del("X-Forwarded-Proto")
 			p.Out.Header.Del("X-Forwarded-Port")
 			p.Out.Header.Del("X-Real-IP")
+			if auth && reg.Username != "" {
+				p.Out.SetBasicAuth(reg.Username, os.Getenv(reg.PasswordEnv))
+			}
 			if !auth && strings.HasPrefix(p.Out.Header.Get("Authorization"), "Basic ") {
 				p.Out.Header.Del("Authorization")
 			}
@@ -170,7 +175,7 @@ func (m *mirror) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	proxy.ServeHTTP(w, r)
 }
 func main() {
-	config := flag.String("config", "config.json", "configuration file")
+	config := flag.String("config", "config.yaml", "configuration file")
 	check := flag.Bool("check", false, "validate configuration and exit")
 	flag.Parse()
 	data, err := os.ReadFile(*config)
@@ -178,7 +183,7 @@ func main() {
 		log.Fatal(err)
 	}
 	var c Config
-	if err = json.Unmarshal(data, &c); err != nil {
+	if err = yaml.Unmarshal(data, &c); err != nil {
 		log.Fatal(err)
 	}
 	if c.Listen == "" {
@@ -188,6 +193,12 @@ func main() {
 		log.Fatal("registries required")
 	}
 	for name, reg := range c.Registries {
+		if (reg.Username == "") != (reg.PasswordEnv == "") {
+			log.Fatalf("username and password_env must be configured together: %s", name)
+		}
+		if reg.PasswordEnv != "" && os.Getenv(reg.PasswordEnv) == "" {
+			log.Fatalf("credential environment variable is empty: %s", reg.PasswordEnv)
+		}
 		u, e := url.Parse(reg.Upstream)
 		if e != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" || (u.Path != "" && u.Path != "/") {
 			log.Fatalf("invalid upstream: %s", name)
