@@ -131,6 +131,36 @@ server = "https://registry-1.docker.io"
 | quay.io | https://quay.io | https://sxxpqp.top/v2/quay |
 | registry.k8s.io | https://registry.k8s.io | https://sxxpqp.top/v2/k8s |
 
+下面三组命令可直接执行，与 Docker Hub 配置并存；镜像名保持原始仓库地址。
+
+```sh
+sudo mkdir -p /etc/containerd/certs.d/ghcr.io
+sudo tee /etc/containerd/certs.d/ghcr.io/hosts.toml >/dev/null <<'TOML'
+server = "https://ghcr.io"
+[host."https://sxxpqp.top/v2/ghcr"]
+  capabilities = ["pull", "resolve"]
+  override_path = true
+TOML
+
+sudo mkdir -p /etc/containerd/certs.d/quay.io
+sudo tee /etc/containerd/certs.d/quay.io/hosts.toml >/dev/null <<'TOML'
+server = "https://quay.io"
+[host."https://sxxpqp.top/v2/quay"]
+  capabilities = ["pull", "resolve"]
+  override_path = true
+TOML
+
+sudo mkdir -p /etc/containerd/certs.d/registry.k8s.io
+sudo tee /etc/containerd/certs.d/registry.k8s.io/hosts.toml >/dev/null <<'TOML'
+server = "https://registry.k8s.io"
+[host."https://sxxpqp.top/v2/k8s"]
+  capabilities = ["pull", "resolve"]
+  override_path = true
+TOML
+```
+
+这些命令会替换对应 hosts.toml；已有自定义配置时先备份或合并。配置目录必须与镜像原始仓库名一致：Kubernetes 官方源是 registry.k8s.io，不是 k8s。旧 k8s.gcr.io 不会自动匹配此配置。
+
 上述源接入方式已提供，真实连通、鉴权和 CDN 白名单仍需逐个验证。
 
 ### 4. 验证 containerd / Kubernetes
