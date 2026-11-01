@@ -1,9 +1,16 @@
 services:
   mirror:
-    image: registry.cn-hangzhou.aliyuncs.com/sxxpqp/opskit-mirror:${MIRROR_VERSION:?Set MIRROR_VERSION to a published commit SHA or version tag}
+    image: registry.cn-hangzhou.aliyuncs.com/sxxpqp/opskit-mirror:${MIRROR_VERSION:-latest}
+    pull_policy: always
+    environment:
+      MIRROR_LISTEN: ${MIRROR_LISTEN:-:8080}
+      MIRROR_DOCKERHUB_USERNAME: ${MIRROR_DOCKERHUB_USERNAME:-}
+      MIRROR_DOCKERHUB_PASSWORD: ${MIRROR_DOCKERHUB_PASSWORD:-}
     restart: unless-stopped
     ports: ["127.0.0.1:8080:8080"]
-    volumes: ["./config.json:/etc/opskit-mirror/config.json:ro"]
+    # Optional YAML: uncomment both lines.
+    # command: ["--config", "/etc/opskit-mirror/config.yaml"]
+    # volumes: ["./config.yaml:/etc/opskit-mirror/config.yaml:ro"]
     read_only: true
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
