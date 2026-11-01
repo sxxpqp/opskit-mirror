@@ -35,9 +35,84 @@ deploy/nginx/mirror.conf 包含 sxxpqp.top、hub.sxxpqp.top。配置 DNS 和覆�
 - 镜像层服务端跟随允许的 CDN 重定向，不携带 Authorization，保留 Range。
 - auth_hosts 和 redirect_hosts 严格匹配域名，未知目标返回 502。示例清单可能不覆盖所有地区，需按实际官方重定向补充，不使用通配开放代理。
 
-## containerd / opskit
+## Docker 客户端配置
 
-/etc/containerd/certs.d/docker.io/hosts.toml：
+以下操作在使用镜像的客户端执行，代理服务器需先配置好 Nginx、DNS 和可信 HTTPS 证书。
+
+### Linux Docker Engine
+
+将下面字段合并进 `/etc/docker/daemon.json`，保留已有配置；不存在时创建文件：
+
+```json
+{
+  "registry-mirrors": ["https://hub.sxxpqp.top"]
+}
+```
+
+使用域名根地址，不填写 `/v2/dockerhub`。只加速 Docker Hub，不能靠此字段映射 GHCR、Quay 等其他仓库。验证配置后，在维护窗口重启 Docker（可能影响运行中的容器）：
+
+```sh
+sudo dockerd --validate --config-file=/etc/docker/daemon.json
+sudo systemctl restart docker
+docker info --format '{{json .RegistryConfig.Mirrors}}'
+docker pull docker.io/library/busybox:1.36.1
+```
+
+Docker Desktop：Settings → Docker Engine，将上述字段合并到 JSON，点击 Apply & restart，再执行拉取命令。不要修改 Desktop 虚拟机内部配置文件。
+
+仍使用原始镜像名，不需要改业务 YAML。也可显式测试标准入口：
+
+```sh
+docker pull hub.sxxpqp.top/library/busybox:1.36.1
+```
+
+固定上游账号在代理服务端配置，客户端不需要为此执行 docker login。私有镜像及客户端凭据透传另行验证。
+
+## containerd 客户端配置
+
+以下为独立 Linux containerd 配置。K3s、RKE2 等发行版可能自动生成配置，需使用发行版自己的配置入口。先执行 `containerd --version` 确认主版本。
+
+### 1. 启用 hosts 配置目录
+
+编辑 `/etc/containerd/config.toml`，合并对应段落，避免重复 TOML 表，不要覆盖现有运行时、CNI、snapshotter 等配置。
+
+containerd 1.x（1.5+，version=2 格式）：
+
+```toml
+version = 2
+[plugins."io.containerd.grpc.v1.cri".registry]
+  config_path = "/etc/containerd/certs.d"
+```
+
+containerd 2.x（version=3 格式）：
+
+```toml
+version = 3
+[plugins."io.containerd.cri.v1.images".registry]
+  config_path = "/etc/containerd/certs.d"
+```
+
+不要只把旧配置的 version 数字改成 3；旧格式需先按 containerd 官方方式迁移。首次修改 config.toml 后在维护窗口重启并检查：
+
+```sh
+sudo systemctl restart containerd
+sudo systemctl status containerd --no-pager
+```
+
+### 2. Docker Hub 域名入口（推荐）
+
+```sh
+sudo mkdir -p /etc/containerd/certs.d/docker.io
+sudo tee /etc/containerd/certs.d/docker.io/hosts.toml >/dev/null <<'TOML'
+server = "https://registry-1.docker.io"
+[host."https://hub.sxxpqp.top"]
+  capabilities = ["pull", "resolve"]
+TOML
+```
+
+### 3. 路径入口（与域名入口二选一）
+
+同一个 docker.io/hosts.toml 也可以改为：
 
 ```toml
 server = "https://registry-1.docker.io"
@@ -46,17 +121,68 @@ server = "https://registry-1.docker.io"
   override_path = true
 ```
 
-CRI registry.config_path 需指向 /etc/containerd/certs.d，1.x/2.x 插件配置位置不同。ctr 使用 --hosts-dir /etc/containerd/certs.d。也可用 https://hub.sxxpqp.top 并去掉 override_path。
+只有包含自定义 API 路径的入口才设置 override_path=true。更新 hosts.toml 无需重启 containerd。保留官方 server 时，代理失败可能回退直连，所以仅看到拉取成功不能证明用了代理。
 
-opskit：endpoint=https://sxxpqp.top/v2/dockerhub、override_path=true、skip_verify=false。保留官方 server 时，失败可能直连回退。
+其他源在相应目录创建独立 hosts.toml，格式同上并设置 override_path=true：
 
-Docker daemon.json 合并以下内容，再按维护窗口重启 Docker：
+| 配置目录（/etc/containerd/certs.d 下） | server | host 路径入口 |
+| --- | --- | --- |
+| ghcr.io | https://ghcr.io | https://sxxpqp.top/v2/ghcr |
+| quay.io | https://quay.io | https://sxxpqp.top/v2/quay |
+| registry.k8s.io | https://registry.k8s.io | https://sxxpqp.top/v2/k8s |
 
-```json
-{"registry-mirrors":["https://hub.sxxpqp.top"]}
+上述源接入方式已提供，真实连通、鉴权和 CDN 白名单仍需逐个验证。
+
+### 4. 验证 containerd / Kubernetes
+
+ctr 必须显式指定 --hosts-dir；普通 ctr 不会自动继承 CRI 的配置：
+
+```sh
+sudo ctr -n k8s.io images pull --hosts-dir /etc/containerd/certs.d docker.io/library/busybox:1.36.1
 ```
 
-Docker 使用域名根地址，registry-mirrors 主要用于 Docker Hub。
+已安装 crictl 的节点可验证 Kubernetes 实际使用的 CRI 路径：
+
+```sh
+sudo crictl --runtime-endpoint unix:///run/containerd/containerd.sock pull docker.io/library/busybox:1.36.1
+```
+
+socket 路径按节点实际配置调整。每台 Kubernetes 工作节点都需要配置；imagePullPolicy: Always 不会强制重新下载已存在的镜像层。
+
+## opskit 配置
+
+合并至 opskit 的配置文件：
+
+```yaml
+mirrors:
+  docker:
+    - https://hub.sxxpqp.top
+  containerd:
+    docker.io:
+      server: https://registry-1.docker.io
+      endpoint: https://sxxpqp.top/v2/dockerhub
+      override_path: true
+      skip_verify: false
+    ghcr.io:
+      server: https://ghcr.io
+      endpoint: https://sxxpqp.top/v2/ghcr
+      override_path: true
+      skip_verify: false
+```
+
+## 确认请求经过代理
+
+在代理项目目录查看：
+
+```sh
+docker compose logs -f mirror
+```
+
+再从客户端拉取镜像。token 200、manifest 200、blob 200/206 表示对应请求成功；首次 401 通常是正常的 Bearer 认证挑战。已缓存镜像层可能不再请求 blob，可选用客户端尚未拉取过的镜像验证，不必删除业务镜像。最终结合客户端完成提示确认拉取结果。
+
+用户已验证 Docker Hub 的 Docker 加速源拉取；containerd 和其他源尚未实测。排查：无日志先查 DNS/Nginx；502 查上游网络及 auth_hosts/redirect_hosts；证书错误应修复证书链或安装 CA，不默认关闭证书验证。
+
+参考：[Docker 官方 mirror 配置](https://docs.docker.com/docker-hub/image-library/mirror/)、[containerd 官方 hosts 配置](https://github.com/containerd/containerd/blob/main/docs/hosts.md)。
 
 ## 登录边界
 
