@@ -27,7 +27,7 @@ Compose 默认使用 latest，pull_policy: always 在每次 docker compose up �
 
 ## Nginx 与地址
 
-deploy/nginx/mirror.conf 包含 sxxpqp.top、hub.sxxpqp.top。配置 DNS 和覆盖两个域名的证书，已有网站请合并 location。nginx -t 通过后 reload。必须转发 /auth/ 和 /v2/。
+deploy/nginx/mirror.conf 仅使用 hub.sxxpqp.top。配置该域名的 DNS 和 HTTPS 证书，已有网站请合并 location。nginx -t 通过后 reload。必须转发 /auth/ 和 /v2/。
 
 - /v2/ 默认 Docker Hub 标准入口。
 - /v2/dockerhub/、/v2/ghcr/、/v2/quay/、/v2/k8s/ 为路径入口。
@@ -116,7 +116,7 @@ TOML
 
 ```toml
 server = "https://registry-1.docker.io"
-[host."https://sxxpqp.top/v2/dockerhub"]
+[host."https://hub.sxxpqp.top/v2/dockerhub"]
   capabilities = ["pull", "resolve"]
   override_path = true
 ```
@@ -127,9 +127,9 @@ server = "https://registry-1.docker.io"
 
 | 配置目录（/etc/containerd/certs.d 下） | server | host 路径入口 |
 | --- | --- | --- |
-| ghcr.io | https://ghcr.io | https://sxxpqp.top/v2/ghcr |
-| quay.io | https://quay.io | https://sxxpqp.top/v2/quay |
-| registry.k8s.io | https://registry.k8s.io | https://sxxpqp.top/v2/k8s |
+| ghcr.io | https://ghcr.io | https://hub.sxxpqp.top/v2/ghcr |
+| quay.io | https://quay.io | https://hub.sxxpqp.top/v2/quay |
+| registry.k8s.io | https://registry.k8s.io | https://hub.sxxpqp.top/v2/k8s |
 
 下面三组命令可直接执行，与 Docker Hub 配置并存；镜像名保持原始仓库地址。
 
@@ -137,7 +137,7 @@ server = "https://registry-1.docker.io"
 sudo mkdir -p /etc/containerd/certs.d/ghcr.io
 sudo tee /etc/containerd/certs.d/ghcr.io/hosts.toml >/dev/null <<'TOML'
 server = "https://ghcr.io"
-[host."https://sxxpqp.top/v2/ghcr"]
+[host."https://hub.sxxpqp.top/v2/ghcr"]
   capabilities = ["pull", "resolve"]
   override_path = true
 TOML
@@ -145,7 +145,7 @@ TOML
 sudo mkdir -p /etc/containerd/certs.d/quay.io
 sudo tee /etc/containerd/certs.d/quay.io/hosts.toml >/dev/null <<'TOML'
 server = "https://quay.io"
-[host."https://sxxpqp.top/v2/quay"]
+[host."https://hub.sxxpqp.top/v2/quay"]
   capabilities = ["pull", "resolve"]
   override_path = true
 TOML
@@ -153,7 +153,7 @@ TOML
 sudo mkdir -p /etc/containerd/certs.d/registry.k8s.io
 sudo tee /etc/containerd/certs.d/registry.k8s.io/hosts.toml >/dev/null <<'TOML'
 server = "https://registry.k8s.io"
-[host."https://sxxpqp.top/v2/k8s"]
+[host."https://hub.sxxpqp.top/v2/k8s"]
   capabilities = ["pull", "resolve"]
   override_path = true
 TOML
@@ -190,12 +190,12 @@ mirrors:
   containerd:
     docker.io:
       server: https://registry-1.docker.io
-      endpoint: https://sxxpqp.top/v2/dockerhub
+      endpoint: https://hub.sxxpqp.top/v2/dockerhub
       override_path: true
       skip_verify: false
     ghcr.io:
       server: https://ghcr.io
-      endpoint: https://sxxpqp.top/v2/ghcr
+      endpoint: https://hub.sxxpqp.top/v2/ghcr
       override_path: true
       skip_verify: false
 ```
