@@ -1,5 +1,5 @@
 # No public domain required; configure it in Nginx.
-listen: 127.0.0.1:8080
+listen: ":8080"
 registries:
   dockerhub:
     upstream: https://registry-1.docker.io
