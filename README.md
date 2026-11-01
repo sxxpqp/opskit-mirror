@@ -17,13 +17,13 @@ go run . --config config.yaml
 Docker Compose 直接使用默认配置；宿主机端口仍仅发布到本机，供 Nginx 转发。
 
 ```sh
-export MIRROR_VERSION=<已发布的完整commit-SHA或版本标签>
+# 默认 latest；可选固定版本：export MIRROR_VERSION=<commit-SHA或版本标签>
 docker compose config --images
 docker compose pull
 docker compose up -d
 ```
 
-必须显式指定版本，不默认 latest。配置持久保存在宿主机，修改后重建容器。
+Compose 默认使用 latest，pull_policy: always 在每次 docker compose up 时检查拉取镜像。可用 MIRROR_VERSION 覆盖为 commit SHA 或版本标签。配置文件可选挂载，修改后重建容器。
 
 ## Nginx 与地址
 
@@ -66,7 +66,7 @@ Nginx/防火墙限制访问；Go 没有内置用户管理。无整层内存缓�
 
 ## CI
 
-沿用 mysql-s3-backup：PR 测试；main、v* tag、手动触发发布 linux/amd64 阿里云镜像。main 发布 latest、完整 SHA，tag 发布版本标签。部署要求显式版本。
+沿用 mysql-s3-backup：PR 测试；main、v* tag、手动触发发布 linux/amd64 阿里云镜像。main 发布 latest、完整 SHA，tag 发布版本标签。Compose 默认 latest，可指定版本。
 
 Secrets：ALIYUN_REGISTRY、ALIYUN_NAME_SPACE、ALIYUN_REGISTRY_USER、ALIYUN_REGISTRY_PASSWORD，不会跨仓库继承。镜像名 opskit-mirror。
 
@@ -99,7 +99,7 @@ config.example.yaml 编译内置，直接运行无需挂载；显式 --config �
 MIRROR_LISTEN=:8080 MIRROR_DOCKERHUB_USERNAME=your-user MIRROR_DOCKERHUB_PASSWORD=your-token ./opskit-mirror
 ```
 
-Compose 默认无需配置文件。可在 .env 设置 MIRROR_DOCKERHUB_USERNAME、MIRROR_DOCKERHUB_PASSWORD；匿名访问两者留空。MIRROR_VERSION 仍必须显式填写。要挂载 YAML，取消 compose.yaml 的 command 和 volumes 注释。
+Compose 默认无需配置文件。可在 .env 设置 MIRROR_DOCKERHUB_USERNAME、MIRROR_DOCKERHUB_PASSWORD；匿名访问两者留空。MIRROR_VERSION 可选，默认 latest。要挂载 YAML，取消 compose.yaml 的 command 和 volumes 注释。
 
 所有仓库支持 MIRROR_<仓库名大写>_UPSTREAM、USERNAME、PASSWORD、PASSWORD_ENV、AUTH_HOSTS、REDIRECT_HOSTS；列表用逗号分隔。PASSWORD 为直接凭据环境变量；PASSWORD_ENV 指向另一个环境变量，二者同时存在时 PASSWORD 优先。环境变量只覆盖已配置仓库，不隐式创建新仓库。容器使用额外变量时需在 Compose environment 显式传入，或 docker run -e。
 
