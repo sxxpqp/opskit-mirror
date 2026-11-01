@@ -12,9 +12,9 @@ go run . --config config.yaml --check
 go run . --config config.yaml
 ```
 
-默认监听 127.0.0.1:8080。/healthz 仅表示进程存活。
+默认监听 :8080（所有网络接口）。/healthz 仅表示进程存活。
 
-Docker Compose：将 config.yaml 的 listen 改为 :8080，宿主机仍仅发布到本机。
+Docker Compose 直接使用默认配置；宿主机端口仍仅发布到本机，供 Nginx 转发。
 
 ```sh
 export MIRROR_VERSION=<已发布的完整commit-SHA或版本标签>
