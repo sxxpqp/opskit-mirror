@@ -105,3 +105,113 @@ func TestRedirectPreservesMultipleAcceptHeaders(t *testing.T) {
 		t.Fatalf("status=%d calls=%d", w.Code, calls)
 	}
 }
+
+func TestClassicDockerRootAuthentication(t *testing.T) {
+	for _, registry := range []string{"ghcr", "quay"} {
+		t.Run(registry, func(t *testing.T) {
+			c, err := loadConfig("")
+			if err != nil {
+				t.Fatal(err)
+			}
+			c.Registries["dockerhub"] = Registry{Upstream: "https://registry-1.docker.io", AuthHosts: []string{"auth.docker.io"}, Username: "hub-user", PasswordEnv: "TEST_HUB_PASSWORD"}
+			t.Setenv("TEST_HUB_PASSWORD", "hub-secret")
+			upstream := registry + ".io"
+			tokenHost := upstream
+			service := upstream
+			if registry == "quay" {
+				service = "quay.io"
+			}
+			calls := 0
+			m := &mirror{c, roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				calls++
+				if r.URL.Path == "/v2/" {
+					realm, audience := "https://auth.docker.io/token", "registry.docker.io"
+					if r.URL.Host == upstream {
+						if r.Header.Get("Authorization") != "" {
+							t.Fatal("credentials leaked during discovery")
+						}
+						realm, audience = "https://"+tokenHost+"/token", service
+					}
+					return &http.Response{StatusCode: 401, Header: http.Header{"Www-Authenticate": {`Bearer realm="` + realm + `",service="` + audience + `"`}}, Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
+				}
+				if r.URL.Path == "/token" {
+					if r.URL.Host != tokenHost || r.URL.Query().Get("service") != service {
+						t.Fatalf("wrong token issuer: %s", r.URL)
+					}
+					if !reflect.DeepEqual(r.URL.Query()["scope"], []string{"repository:owner/image:pull"}) {
+						t.Fatalf("wrong scope: %v", r.URL.Query()["scope"])
+					}
+					if r.Header.Get("Authorization") != "" || r.URL.Query().Get("account") != "" {
+						t.Fatal("Docker Hub credentials leaked to other registry")
+					}
+					if r.URL.Query().Get("docker_routing") != "" {
+						t.Fatal("routing marker leaked")
+					}
+					return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"token":"registry-token"}`)), Request: r}, nil
+				}
+				if r.URL.Host != upstream || r.URL.Path != "/v2/owner/image/manifests/test" || r.Header.Get("Authorization") != "Bearer registry-token" {
+					t.Fatalf("wrong manifest request: %s", r.URL)
+				}
+				return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("manifest")), Request: r}, nil
+			})}
+			w := httptest.NewRecorder()
+			m.ServeHTTP(w, httptest.NewRequest("GET", "https://mirror.example/v2/", nil))
+			matches := realmRE.FindStringSubmatch(w.Header().Get("WWW-Authenticate"))
+			if w.Code != 401 || len(matches) != 2 {
+				t.Fatal("root challenge missing")
+			}
+			u, err := url.Parse(matches[1])
+			if err != nil {
+				t.Fatal(err)
+			}
+			q := u.Query()
+			q.Set("service", "registry.docker.io")
+			q.Set("scope", "repository:"+registry+"/owner/image:pull")
+			q.Set("account", "hub-user")
+			u.RawQuery = q.Encode()
+			r := httptest.NewRequest("GET", u.String(), nil)
+			r.SetBasicAuth("hub-user", "hub-secret")
+			w = httptest.NewRecorder()
+			m.ServeHTTP(w, r)
+			if w.Code != 200 {
+				t.Fatalf("token status %d", w.Code)
+			}
+			r = httptest.NewRequest("GET", "https://mirror.example/v2/"+registry+"/owner/image/manifests/test", nil)
+			r.Header.Set("Authorization", "Bearer registry-token")
+			w = httptest.NewRecorder()
+			m.ServeHTTP(w, r)
+			if w.Code != 200 || calls != 4 {
+				t.Fatalf("status=%d calls=%d", w.Code, calls)
+			}
+		})
+	}
+}
+
+func TestRootTokenScopesRejectMixedRegistries(t *testing.T) {
+	c, err := loadConfig("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := rootTokenScopes([]string{"repository:ghcr/owner/image:pull", "repository:quay/owner/image:pull"}, c.Registries); err == nil {
+		t.Fatal("mixed registries accepted")
+	}
+}
+
+func TestUnroutedContainerdDockerHubScopeRemainsUnchanged(t *testing.T) {
+	c, err := loadConfig("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := &mirror{c, roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Host != "auth.docker.io" || r.URL.Path != "/token" || r.URL.Query().Get("scope") != "repository:ghcr/owner-image:pull" {
+			t.Fatalf("containerd Docker Hub namespace was rerouted: %s", r.URL)
+		}
+		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"token":"hub-token"}`)), Request: r}, nil
+	})}
+	w := httptest.NewRecorder()
+	// Containerd has no root routing marker, even for a namespace named ghcr.
+	m.ServeHTTP(w, httptest.NewRequest("GET", "https://mirror.example/auth/dockerhub/aHR0cHM6Ly9hdXRoLmRvY2tlci5pby90b2tlbg?service=registry.docker.io&scope=repository%3Aghcr%2Fowner-image%3Apull", nil))
+	if w.Code != 200 {
+		t.Fatalf("token status %d", w.Code)
+	}
+}

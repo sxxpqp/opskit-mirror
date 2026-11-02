@@ -96,14 +96,46 @@ func (m *mirror) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		target, _ = url.Parse(reg.Upstream)
 		target.Path = path
 	}
+	rootRouted := false
+	var routedScopes []string
+	var routedService string
+	if auth && name == "dockerhub" && r.URL.Query().Get("docker_routing") == "1" {
+		routedName, scopes, e := rootTokenScopes(r.URL.Query()["scope"], m.config.Registries)
+		if e != nil {
+			http.Error(w, "mixed registry scopes denied", http.StatusBadRequest)
+			return
+		}
+		// Registries without token authentication (e.g. K8s) ignore the root token.
+		if routedName == name || len(m.config.Registries[routedName].AuthHosts) != 0 {
+			routedScopes = scopes
+			if routedName != name {
+				reg = m.config.Registries[routedName]
+				target, routedService, e = m.tokenChallenge(r.Context(), reg)
+				if e != nil {
+					slog.Error("token_routing_failed", "request_id", r.Header.Get("X-Request-ID"), "registry", routedName, "error_type", fmt.Sprintf("%T", e))
+					http.Error(w, "upstream unavailable", http.StatusBadGateway)
+					return
+				}
+				name = routedName
+				rootRouted = true
+			}
+		}
+	}
 	q := target.Query()
 	for k, vs := range r.URL.Query() {
-		if k != "ns" && k != "repository_prefix" && k != "repository_path" {
+		if k != "ns" && k != "repository_prefix" && k != "repository_path" && k != "docker_routing" {
 			q[k] = vs
 		}
 	}
 	if auth && r.URL.Query().Get("repository_prefix") == name {
 		q["scope"] = upstreamScopes(q["scope"], name, r.URL.Query().Get("repository_path"))
+	}
+	if routedScopes != nil {
+		q["scope"] = routedScopes
+	}
+	if rootRouted {
+		q.Set("service", routedService)
+		q.Del("account")
 	}
 	target.RawQuery = q.Encode()
 	proxy := &httputil.ReverseProxy{
@@ -116,6 +148,10 @@ func (m *mirror) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			p.Out.Header.Del("X-Forwarded-Proto")
 			p.Out.Header.Del("X-Forwarded-Port")
 			p.Out.Header.Del("X-Real-IP")
+			// Docker Hub credentials must not be forwarded to a different registry.
+			if rootRouted {
+				p.Out.Header.Del("Authorization")
+			}
 			if auth && reg.Username != "" {
 				p.Out.SetBasicAuth(reg.Username, os.Getenv(reg.PasswordEnv))
 			}
@@ -173,6 +209,9 @@ func (m *mirror) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					// Docker includes the routing prefix in its repository scope; CRI uses the original name.
 					if !auth && r.URL.Query().Get("ns") == "" && strings.HasPrefix(r.URL.Path, "/v2/"+name+"/") {
 						realm += "?repository_prefix=" + url.QueryEscape(name) + "&repository_path=" + url.QueryEscape(manifestRepository(path))
+					}
+					if !auth && r.URL.Path == "/v2/" && r.URL.Query().Get("ns") == "" {
+						realm += "?docker_routing=1"
 					}
 					resp.Header.Set("WWW-Authenticate", strings.Replace(challenge, match[1], realm, 1))
 				}

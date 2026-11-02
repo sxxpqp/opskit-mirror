@@ -1,6 +1,13 @@
 package main
 
-import "strings"
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"net/url"
+	"regexp"
+	"strings"
+)
 
 // Translate Docker's routed repository names back to upstream names. A token
 // request may contain both the challenge scope and Docker's own repository scope.
@@ -30,4 +37,67 @@ func manifestRepository(path string) string {
 		}
 	}
 	return ""
+}
+
+var serviceRE = regexp.MustCompile(`service="([^"]+)"`)
+
+// Classic Docker authenticates against /v2/, before it requests a repository.
+// Select the token issuer from its routed repository scopes instead of issuing
+// a Docker Hub token for a GHCR/Quay resource.
+func rootTokenScopes(scopes []string, registries map[string]Registry) (string, []string, error) {
+	selected := ""
+	var normalized []string
+	for _, value := range scopes {
+		for _, scope := range strings.Fields(value) {
+			parts := strings.SplitN(scope, ":", 3)
+			if len(parts) != 3 || parts[0] != "repository" {
+				normalized = append(normalized, scope)
+				continue
+			}
+			name := "dockerhub"
+			prefix, repository, hasPrefix := strings.Cut(parts[1], "/")
+			if _, ok := registries[prefix]; ok && hasPrefix && repository != "" {
+				name = prefix
+				parts[1] = repository
+			}
+			if selected != "" && selected != name {
+				return "", nil, fmt.Errorf("mixed registry scopes denied")
+			}
+			selected = name
+			normalized = append(normalized, strings.Join(parts, ":"))
+		}
+	}
+	if selected == "" {
+		selected = "dockerhub"
+	}
+	return selected, normalized, nil
+}
+
+func (m *mirror) tokenChallenge(ctx context.Context, reg Registry) (*url.URL, string, error) {
+	u, err := url.Parse(reg.Upstream)
+	if err != nil {
+		return nil, "", fmt.Errorf("invalid registry upstream")
+	}
+	u.Path = "/v2/"
+	u.RawQuery = ""
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return nil, "", err
+	}
+	resp, err := m.transport.RoundTrip(req)
+	if err != nil {
+		return nil, "", err
+	}
+	defer resp.Body.Close()
+	challenge := resp.Header.Get("WWW-Authenticate")
+	realm := realmRE.FindStringSubmatch(challenge)
+	service := serviceRE.FindStringSubmatch(challenge)
+	if resp.StatusCode != http.StatusUnauthorized || len(realm) != 2 || len(service) != 2 {
+		return nil, "", fmt.Errorf("registry token challenge unavailable")
+	}
+	target, err := url.Parse(realm[1])
+	if err != nil || target.Scheme != "https" || target.User != nil || !allowed(target.Host, reg.AuthHosts) {
+		return nil, "", fmt.Errorf("auth host denied")
+	}
+	return target, service[1], nil
 }
