@@ -32,8 +32,9 @@ deploy/nginx/mirror.conf 仅使用 hub.sxxpqp.top。配置该域名的 DNS 和 H
 - /v2/ 默认 Docker Hub 标准入口。
 - /v2/dockerhub/、/v2/ghcr/、/v2/quay/、/v2/k8s/ 为路径入口。
 - 认证 realm 改写到同入口 /auth/；service/scope 保留。
-- 镜像层服务端跟随允许的 CDN 重定向，不携带 Authorization，保留 Range。
-- auth_hosts 和 redirect_hosts 严格匹配域名，未知目标返回 502。示例清单可能不覆盖所有地区，需按实际官方重定向补充，不使用通配开放代理。
+- manifest 和镜像层在服务端跟随任意公网 HTTPS CDN 重定向，最多 5 次；不携带 Authorization 或 Cookie，保留 Range、Accept、If-Range。
+- auth_hosts 继续严格匹配认证域名；CDN 重定向不再使用域名白名单。拒绝 HTTP、带用户名/密码的 URL、内网、回环、链路本地、共享地址和云元数据地址。所有出站连接先校验全部 DNS 地址，再连接校验过的 IP，防止 DNS 重绑定。
+- 为保证 IP 校验作用于实际目标，出站连接不使用 HTTP_PROXY、HTTPS_PROXY 或 ALL_PROXY；上游及认证服务也必须解析到公网地址。旧 redirect_hosts / MIRROR_<仓库名大写>_REDIRECT_HOSTS 兼容读取但不再影响放行规则，无需维护 CDN 域名。
 
 ## Docker 客户端配置
 
@@ -161,7 +162,7 @@ TOML
 
 这些命令会替换对应 hosts.toml；已有自定义配置时先备份或合并。配置目录必须与镜像原始仓库名一致：Kubernetes 官方源是 registry.k8s.io，不是 k8s。旧 k8s.gcr.io 不会自动匹配此配置。
 
-上述源接入方式已提供，真实连通、鉴权和 CDN 白名单仍需逐个验证。
+上述源接入方式已提供，真实连通、鉴权和 CDN 下载仍需逐个验证。
 
 ### 4. 验证 containerd / Kubernetes
 
@@ -210,7 +211,7 @@ docker compose logs -f mirror
 
 再从客户端拉取镜像。token 200、manifest 200、blob 200/206 表示对应请求成功；首次 401 通常是正常的 Bearer 认证挑战。已缓存镜像层可能不再请求 blob，可选用客户端尚未拉取过的镜像验证，不必删除业务镜像。最终结合客户端完成提示确认拉取结果。
 
-用户已验证 Docker Hub 的 Docker 加速源拉取；containerd 和其他源尚未实测。排查：无日志先查 DNS/Nginx；502 查上游网络及 auth_hosts/redirect_hosts；证书错误应修复证书链或安装 CA，不默认关闭证书验证。
+用户已验证 Docker Hub 的 Docker 加速源拉取；containerd 和其他源尚未实测。排查：无日志先查 DNS/Nginx；502 查上游网络、auth_hosts 及公网地址校验；证书错误应修复证书链或安装 CA，不默认关闭证书验证。
 
 参考：[Docker 官方 mirror 配置](https://docs.docker.com/docker-hub/image-library/mirror/)、[containerd 官方 hosts 配置](https://github.com/containerd/containerd/blob/main/docs/hosts.md)。
 
@@ -242,7 +243,6 @@ registries:
     username: your-dockerhub-user
     password_env: DOCKERHUB_TOKEN
     auth_hosts: [auth.docker.io]
-    redirect_hosts: [production.cloudflare.docker.com, production.cloudfront.docker.com]
 ```
 
 DOCKERHUB_TOKEN 环境变量填写 Docker Hub 只读访问令牌，不把真实凭据提交到仓库。Compose 从宿主环境或 .env 读取该变量；本机运行先 export。用户名和 password_env 必须成对配置，令牌为空启动失败。固定账号仅用于白名单 token 端点并覆盖客户端凭据，不发送给镜像层 CDN。该账号可访问的私有镜像可能被代理使用者获取，启用前必须限制 Nginx/网络访问。否则省略这两个字段，由客户端提供认证；私有镜像仍需实测。
@@ -257,10 +257,12 @@ MIRROR_LISTEN=:8080 MIRROR_DOCKERHUB_USERNAME=your-user MIRROR_DOCKERHUB_PASSWOR
 
 Compose 默认无需配置文件。可在 .env 设置 MIRROR_DOCKERHUB_USERNAME、MIRROR_DOCKERHUB_PASSWORD；匿名访问两者留空。MIRROR_VERSION 可选，默认 latest。要挂载 YAML，取消 compose.yaml 的 command 和 volumes 注释。
 
-所有仓库支持 MIRROR_<仓库名大写>_UPSTREAM、USERNAME、PASSWORD、PASSWORD_ENV、AUTH_HOSTS、REDIRECT_HOSTS；列表用逗号分隔。PASSWORD 为直接凭据环境变量；PASSWORD_ENV 指向另一个环境变量，二者同时存在时 PASSWORD 优先。环境变量只覆盖已配置仓库，不隐式创建新仓库。容器使用额外变量时需在 Compose environment 显式传入，或 docker run -e。
+所有仓库支持 MIRROR_<仓库名大写>_UPSTREAM、USERNAME、PASSWORD、PASSWORD_ENV、AUTH_HOSTS；列表用逗号分隔。PASSWORD 为直接凭据环境变量；PASSWORD_ENV 指向另一个环境变量，二者同时存在时 PASSWORD 优先。环境变量只覆盖已配置仓库，不隐式创建新仓库。容器使用额外变量时需在 Compose environment 显式传入，或 docker run -e。
 
 固定账号权限对代理使用者共享，公网必须限制入口。
 
 ## 日志
 
 访问日志为 JSON：request_id、registry、operation（token/manifest/blob）、method、status、bytes、duration_ms、result。上游失败日志关联相同 request_id；响应头返回 X-Request-ID。客户端取消单独标记，不输出 Authorization、token、密码、完整查询参数或签名下载地址。健康检查不记录访问日志。启动/配置错误另有进程日志。日志记录本次传输字节，不代表镜像总大小或固定百分比；Docker/containerd 实际拉取仍需联调。
+
+重定向校验失败会额外记录 redirect_denied，包含 request_id、registry、redirect_host、redirect_scheme 和固定原因；不记录完整重定向 URL、路径或查询参数。结合相同 request_id 的 upstream_failed 定位被拒绝的重定向；连接阶段因非公网地址失败时 reason 为 destination address is not public。

@@ -1,3 +1,4 @@
+# CDN redirects allow public HTTPS destinations; private and metadata addresses are blocked.
 # No public domain required; configure it in Nginx.
 listen: ":8080"
 registries:
@@ -7,16 +8,12 @@ registries:
     # username: your-dockerhub-user
     # password_env: DOCKERHUB_TOKEN
     auth_hosts: ["auth.docker.io"]
-    redirect_hosts: ["production.cloudflare.docker.com", "production.cloudfront.docker.com"]
   ghcr:
     upstream: https://ghcr.io
     auth_hosts: ["ghcr.io"]
-    redirect_hosts: ["pkg-containers.githubusercontent.com"]
   quay:
     upstream: https://quay.io
     auth_hosts: ["quay.io"]
-    redirect_hosts: []
   k8s:
     upstream: https://registry.k8s.io
     auth_hosts: []
-    redirect_hosts: ["us-east4-docker.pkg.dev", "europe-west4-docker.pkg.dev", "asia-east1-docker.pkg.dev"]

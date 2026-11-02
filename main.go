@@ -3,12 +3,12 @@ package main
 import (
 	_ "embed"
 	"encoding/base64"
+	"errors"
 	"flag"
 	"fmt"
 	"gopkg.in/yaml.v3"
 	"log"
 	"log/slog"
-	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -20,10 +20,11 @@ import (
 )
 
 type Registry struct {
-	Username      string   `yaml:"username"`
-	PasswordEnv   string   `yaml:"password_env"`
-	Upstream      string   `yaml:"upstream"`
-	AuthHosts     []string `yaml:"auth_hosts"`
+	Username    string   `yaml:"username"`
+	PasswordEnv string   `yaml:"password_env"`
+	Upstream    string   `yaml:"upstream"`
+	AuthHosts   []string `yaml:"auth_hosts"`
+	// RedirectHosts is accepted for compatibility; redirects now use public-address validation.
 	RedirectHosts []string `yaml:"redirect_hosts"`
 }
 type Config struct {
@@ -130,7 +131,8 @@ func (m *mirror) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				if e != nil {
 					return e
 				}
-				if next.Scheme != "https" || next.User != nil || !(next.Host == target.Host || allowed(next.Host, reg.RedirectHosts)) {
+				if !publicRedirectURL(next) {
+					slog.Warn("redirect_denied", "request_id", r.Header.Get("X-Request-ID"), "registry", name, "reason", "redirect requires a public HTTPS target without credentials", "redirect_host", next.Hostname(), "redirect_scheme", next.Scheme)
 					return fmt.Errorf("redirect host denied")
 				}
 				resp.Body.Close()
@@ -171,7 +173,11 @@ func (m *mirror) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return nil
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, e error) {
-			slog.Error("upstream_failed", "request_id", r.Header.Get("X-Request-ID"), "registry", name, "error_type", fmt.Sprintf("%T", e))
+			reason := "upstream request failed"
+			if errors.Is(e, errNonPublicAddress) {
+				reason = "destination address is not public"
+			}
+			slog.Error("upstream_failed", "request_id", r.Header.Get("X-Request-ID"), "registry", name, "error_type", fmt.Sprintf("%T", e), "reason", reason)
 			http.Error(w, "upstream unavailable", 502)
 		},
 	}
@@ -205,7 +211,7 @@ func main() {
 		fmt.Println("configuration valid")
 		return
 	}
-	t := &http.Transport{Proxy: http.ProxyFromEnvironment, DialContext: (&net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}).DialContext, ForceAttemptHTTP2: true, MaxIdleConns: 100, MaxIdleConnsPerHost: 20, IdleConnTimeout: 90 * time.Second, TLSHandshakeTimeout: 10 * time.Second, ResponseHeaderTimeout: 900 * time.Second, DisableCompression: true}
+	t := &http.Transport{DialContext: publicDialContext, ForceAttemptHTTP2: true, MaxIdleConns: 100, MaxIdleConnsPerHost: 20, IdleConnTimeout: 90 * time.Second, TLSHandshakeTimeout: 10 * time.Second, ResponseHeaderTimeout: 900 * time.Second, DisableCompression: true}
 	s := &http.Server{Addr: c.Listen, Handler: accessLog(&mirror{c, t}), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 90 * time.Second}
 	log.Printf("opskit-mirror listening on %s (no disk cache)", c.Listen)
 	log.Fatal(s.ListenAndServe())
