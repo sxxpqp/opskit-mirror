@@ -31,7 +31,7 @@ deploy/nginx/mirror.conf 仅使用 hub.sxxpqp.top。配置该域名的 DNS 和 H
 
 - /v2/ 默认 Docker Hub 标准入口。
 - /v2/dockerhub/、/v2/ghcr/、/v2/quay/、/v2/k8s/ 为路径入口。
-- 认证 realm 改写到同入口 /auth/；service/scope 保留。
+- 认证 realm 改写到同入口 /auth/，service 保留；Docker 路径入口申请 token 时将带路由前缀的仓库 scope 转换成实际的上游仓库名，containerd 的原始 scope 保留。
 - manifest 和镜像层在服务端跟随任意公网 HTTPS CDN 重定向，最多 5 次；不携带 Authorization 或 Cookie，保留 Range、Accept、If-Range。
 - auth_hosts 继续严格匹配认证域名；CDN 重定向不再使用域名白名单。拒绝 HTTP、带用户名/密码的 URL、内网、回环、链路本地、共享地址和云元数据地址。所有出站连接先校验全部 DNS 地址，再连接校验过的 IP，防止 DNS 重绑定。
 - 为保证 IP 校验作用于实际目标，出站连接不使用 HTTP_PROXY、HTTPS_PROXY 或 ALL_PROXY；上游及认证服务也必须解析到公网地址。旧 redirect_hosts / MIRROR_<仓库名大写>_REDIRECT_HOSTS 兼容读取但不再影响放行规则，无需维护 CDN 域名。
@@ -68,6 +68,18 @@ docker pull hub.sxxpqp.top/library/busybox:1.36.1
 ```
 
 固定上游账号在代理服务端配置，客户端不需要为此执行 docker login。私有镜像及客户端凭据透传另行验证。
+
+### Docker 拉取其他仓库
+
+Docker 的 registry-mirrors 仅加速 Docker Hub。GHCR、Quay 和 Kubernetes 镜像使用显式代理仓库名；客户端自动添加 /v2，不要在 docker pull 镜像名里填写 /v2：
+
+```sh
+docker pull hub.sxxpqp.top/k8s/pause:3.9
+docker pull hub.sxxpqp.top/ghcr/stefanprodan/podinfo:6.7.1
+docker pull hub.sxxpqp.top/quay/prometheus/busybox:latest
+```
+
+Docker 路径入口的 token scope 会去掉当前镜像的路由前缀；重定向完整保留多项 Accept，避免单平台 manifest 被误判为客户端不接受的类型。2026-11-02 使用 Docker Engine 29.8.2 和本地修复版代理验证上述三个公开镜像拉取通过；相同的 K8s 多值 Accept 请求在旧公网代理返回 404、修复版返回 200。公网部署需更新镜像后重新验证；不代表私有镜像、docker login 或其他客户端版本均已验收。
 
 ## containerd 客户端配置
 

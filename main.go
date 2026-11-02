@@ -98,9 +98,12 @@ func (m *mirror) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	q := target.Query()
 	for k, vs := range r.URL.Query() {
-		if k != "ns" {
+		if k != "ns" && k != "repository_prefix" && k != "repository_path" {
 			q[k] = vs
 		}
+	}
+	if auth && r.URL.Query().Get("repository_prefix") == name {
+		q["scope"] = upstreamScopes(q["scope"], name, r.URL.Query().Get("repository_path"))
 	}
 	target.RawQuery = q.Encode()
 	proxy := &httputil.ReverseProxy{
@@ -141,8 +144,8 @@ func (m *mirror) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					return e
 				}
 				for _, h := range []string{"Range", "Accept", "If-Range"} {
-					if v := r.Header.Get(h); v != "" {
-						req.Header.Set(h, v)
+					if values := r.Header.Values(h); len(values) != 0 {
+						req.Header[h] = append([]string(nil), values...)
 					}
 				}
 				res, e := m.transport.RoundTrip(req)
@@ -167,6 +170,10 @@ func (m *mirror) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 						scheme = forwarded
 					}
 					realm := scheme + "://" + r.Host + "/auth/" + name + "/" + base64.RawURLEncoding.EncodeToString([]byte(match[1]))
+					// Docker includes the routing prefix in its repository scope; CRI uses the original name.
+					if !auth && r.URL.Query().Get("ns") == "" && strings.HasPrefix(r.URL.Path, "/v2/"+name+"/") {
+						realm += "?repository_prefix=" + url.QueryEscape(name) + "&repository_path=" + url.QueryEscape(manifestRepository(path))
+					}
 					resp.Header.Set("WWW-Authenticate", strings.Replace(challenge, match[1], realm, 1))
 				}
 			}
