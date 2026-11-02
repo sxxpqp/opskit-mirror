@@ -81,7 +81,7 @@ docker pull hub.sxxpqp.top/quay/prometheus/busybox:latest
 
 Docker 路径入口的 token scope 会去掉当前镜像的路由前缀；重定向完整保留多项 Accept，避免单平台 manifest 被误判为客户端不接受的类型。2026-11-02 使用 Docker Engine 29.8.2 和本地修复版代理验证上述三个公开镜像拉取通过；相同的 K8s 多值 Accept 请求在旧公网代理返回 404、修复版返回 200。公网部署需更新镜像后重新验证；不代表私有镜像、docker login 或其他客户端版本均已验收。
 
-Docker 28 经典拉取链路先读取 `/v2/` 根入口认证挑战；根入口 token 请求现按 `ghcr/`、`quay/` 等仓库前缀选择对应上游 token 服务和 scope，禁止将 Docker Hub 账号及凭据转发到其他仓库。同一根入口认证流程在旧公网代理可复现 GHCR `invalid token`（403），修复版获取 manifest 返回 200。containerd 的逐仓库认证保持原行为。
+Docker 28 经典拉取链路先读取 `/v2/` 根入口认证挑战；根入口 token 请求现按 `ghcr/`、`quay/` 等仓库前缀选择对应上游 token 服务和 scope，禁止将 Docker Hub 账号及凭据转发到其他仓库。同一根入口认证流程在旧公网代理可复现 GHCR `invalid token`（403），修复版获取 manifest 返回 200。containerd 的逐仓库认证保持原行为。 随后使用隔离的 Docker Engine 28.5.2（经典 vfs 存储）完成真实端到端对比：旧公网代理 GHCR 拉取复现 invalid token；本地修复版的 GHCR podinfo:6.7.1、Quay busybox:latest、K8s pause:3.9 和 Docker Hub busybox:1.36.1 均完成镜像层下载、校验及拉取。
 
 ## containerd 客户端配置
 
