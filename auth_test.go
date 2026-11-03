@@ -215,3 +215,106 @@ func TestUnroutedContainerdDockerHubScopeRemainsUnchanged(t *testing.T) {
 		t.Fatalf("token status %d", w.Code)
 	}
 }
+
+func TestGHCRPrefixedRegistryProbe(t *testing.T) {
+	for _, tc := range []struct {
+		name, namespace, repository string
+	}{
+		{"docker", "", "tale/headplane"},
+		{"docker-namespace-matches-prefix", "", "ghcr/podinfo"},
+		{"containerd", "ghcr.io", "tale/headplane"},
+		{"containerd-namespace-matches-prefix", "ghcr.io", "ghcr/podinfo"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, err := loadConfig("")
+			if err != nil {
+				t.Fatal(err)
+			}
+			tokenCalls := 0
+			m := &mirror{c, roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				if r.URL.Host != "ghcr.io" {
+					t.Fatalf("unexpected upstream: %s", r.URL.Host)
+				}
+				if r.URL.Path == "/token" {
+					tokenCalls++
+					want := []string{"repository:" + tc.repository + ":pull"}
+					if tc.namespace != "" {
+						// Containerd query values are forwarded unchanged, including duplicates.
+						want = append(want, want[0])
+					}
+					if !reflect.DeepEqual(r.URL.Query()["scope"], want) {
+						t.Fatalf("scope = %v, want %v", r.URL.Query()["scope"], want)
+					}
+					if r.URL.Query().Get("repository_prefix") != "" || r.URL.Query().Get("repository_path") != "" {
+						t.Fatal("routing context leaked upstream")
+					}
+					if r.URL.Query().Get("service") != "ghcr.io" {
+						t.Fatal("wrong token service")
+					}
+					return &http.Response{StatusCode: 200, Header: http.Header{},
+						Body: io.NopCloser(strings.NewReader("{}")), Request: r}, nil
+				}
+				if r.URL.Path != "/v2/" {
+					t.Fatalf("unexpected probe path: %s", r.URL.Path)
+				}
+				return &http.Response{StatusCode: 401, Header: http.Header{
+					"Www-Authenticate": {`Bearer realm="https://ghcr.io/token",service="ghcr.io",scope="repository:user/image:pull"`},
+				}, Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
+			})}
+			probe := "https://mirror.example/v2/ghcr/"
+			if tc.namespace != "" {
+				probe += "?ns=" + tc.namespace
+			}
+			w := httptest.NewRecorder()
+			m.ServeHTTP(w, httptest.NewRequest("GET", probe, nil))
+			challenge := w.Header().Get("WWW-Authenticate")
+			if w.Code != 401 {
+				t.Fatalf("invalid probe status: %d", w.Code)
+			}
+			if tc.namespace == "" {
+				if strings.Contains(challenge, "scope=") {
+					t.Fatalf("Docker probe retained placeholder scope: %s", challenge)
+				}
+			} else if !strings.Contains(challenge, "scope=\"repository:user/image:pull\"") {
+				t.Fatalf("containerd probe challenge was changed: %s", challenge)
+			}
+			match := realmRE.FindStringSubmatch(challenge)
+			if len(match) != 2 {
+				t.Fatal("rewritten realm missing")
+			}
+			u, err := url.Parse(match[1])
+			if err != nil {
+				t.Fatal(err)
+			}
+			q := u.Query()
+			q.Set("service", "ghcr.io")
+			repo := tc.repository
+			if tc.namespace == "" {
+				repo = "ghcr/" + repo
+			}
+			q.Add("scope", "repository:"+repo+":pull")
+			q.Add("scope", "repository:"+repo+":pull")
+			u.RawQuery = q.Encode()
+			w = httptest.NewRecorder()
+			m.ServeHTTP(w, httptest.NewRequest("GET", u.String(), nil))
+			if w.Code != 200 || tokenCalls != 1 {
+				t.Fatalf("token status=%d calls=%d", w.Code, tokenCalls)
+			}
+		})
+	}
+}
+
+func TestGHCRProbeScopeParameterPositions(t *testing.T) {
+	for _, challenge := range []string{
+		`Bearer realm="https://ghcr.io/token",service="ghcr.io",scope="repository:user/image:pull"`,
+		`Bearer scope="repository:user/image:pull",realm="https://ghcr.io/token",service="ghcr.io"`,
+		`Bearer realm="https://ghcr.io/token", scope="repository:user/image:pull", service="ghcr.io"`,
+	} {
+		got := probeScopeRE.ReplaceAllString(challenge, "")
+		if strings.Contains(got, "scope=") || !strings.HasPrefix(got, "Bearer ") ||
+			len(realmRE.FindStringSubmatch(got)) != 2 || len(serviceRE.FindStringSubmatch(got)) != 2 {
+			t.Fatalf("malformed challenge after scope removal: %s", got)
+		}
+	}
+}
+

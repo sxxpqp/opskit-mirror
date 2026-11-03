@@ -17,8 +17,16 @@ func upstreamScopes(scopes []string, prefix, repository string) []string {
 	for _, value := range scopes {
 		for _, scope := range strings.Fields(value) {
 			parts := strings.SplitN(scope, ":", 3)
-			if len(parts) == 3 && parts[0] == "repository" && repository != "" && parts[1] == prefix+"/"+repository {
-				parts[1] = repository
+			if len(parts) == 3 && parts[0] == "repository" &&
+				((repository != "" && parts[1] == prefix+"/"+repository) ||
+					(repository == "" && strings.HasPrefix(parts[1], prefix+"/"))) {
+				if repository == "" {
+					// A Docker /v2/<registry>/ probe has no repository path.
+					// Its client-supplied scope still includes one routing prefix.
+					parts[1] = strings.TrimPrefix(parts[1], prefix+"/")
+				} else {
+					parts[1] = repository
+				}
 				scope = strings.Join(parts, ":")
 			}
 			if !seen[scope] {
@@ -40,6 +48,10 @@ func manifestRepository(path string) string {
 }
 
 var serviceRE = regexp.MustCompile(`service="([^"]+)"`)
+
+// GHCR probes advertise repository:user/image:pull without a real repository.
+// Remove the whole scope parameter, regardless of its position in the challenge.
+var probeScopeRE = regexp.MustCompile(`,\s*scope="[^"]*"|scope="[^"]*",\s*`)
 
 // Classic Docker authenticates against /v2/, before it requests a repository.
 // Select the token issuer from its routed repository scopes instead of issuing
@@ -101,3 +113,4 @@ func (m *mirror) tokenChallenge(ctx context.Context, reg Registry) (*url.URL, st
 	}
 	return target, service[1], nil
 }
+

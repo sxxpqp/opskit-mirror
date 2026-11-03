@@ -191,6 +191,11 @@ func (m *mirror) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				*resp = *res
 			}
 			challenge := resp.Header.Get("WWW-Authenticate")
+			if !auth && name == "ghcr" && path == "/v2/" && r.URL.Query().Get("ns") == "" {
+				// A registry probe is not a request for user/image. Let the
+				// client supply its real repository scope when asking for a token.
+				challenge = probeScopeRE.ReplaceAllString(challenge, "")
+			}
 			if challenge != "" {
 				match := realmRE.FindStringSubmatch(challenge)
 				if len(match) == 2 {
@@ -390,3 +395,4 @@ func accessLog(next http.Handler) http.Handler {
 		slog.Info("request_completed", "request_id", id, "registry", registry, "operation", operation, "method", r.Method, "status", out.status, "bytes", out.bytes, "duration_ms", time.Since(start).Milliseconds(), "result", result)
 	})
 }
+
