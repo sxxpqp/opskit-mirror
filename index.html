@@ -561,9 +561,6 @@ sudo systemctl restart docker</code></pre>
       headerInput.addEventListener("keydown", function (e) {
         if (e.key === "Enter") openOverlay();
       });
-      headerInput.addEventListener("focus", function () {
-        openOverlay();
-      });
       modalBtn.addEventListener("click", function () {
         var q = modalInput.value.trim();
         if (q) doSearch(q);
