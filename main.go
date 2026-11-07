@@ -6,7 +6,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"gopkg.in/yaml.v3"
 	"log"
 	"log/slog"
 	"net/http"
@@ -17,6 +16,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 type Registry struct {
@@ -49,6 +50,11 @@ func allowed(host string, hosts []string) bool {
 func (m *mirror) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == "/healthz" {
 		w.WriteHeader(200)
+		return
+	}
+	if r.URL.Path == "/" || r.URL.Path == "/index.html" {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Write(indexHTML)
 		return
 	}
 	if r.Method != "GET" && r.Method != "HEAD" {
@@ -271,6 +277,9 @@ func main() {
 //go:embed config.example.yaml
 var defaultConfig []byte
 
+//go:embed index.html
+var indexHTML []byte
+
 // Precedence: embedded defaults < explicit YAML < environment.
 func loadConfig(path string) (Config, error) {
 	var c Config
@@ -395,4 +404,3 @@ func accessLog(next http.Handler) http.Handler {
 		slog.Info("request_completed", "request_id", id, "registry", registry, "operation", operation, "method", r.Method, "status", out.status, "bytes", out.bytes, "duration_ms", time.Since(start).Milliseconds(), "result", result)
 	})
 }
-

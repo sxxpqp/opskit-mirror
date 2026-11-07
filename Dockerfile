@@ -2,7 +2,7 @@ FROM golang:1.26.2-alpine3.23 AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
-COPY *.go config.example.yaml ./
+COPY *.go config.example.yaml index.html ./
 RUN CGO_ENABLED=0 go build -trimpath -o /mirror .
 FROM alpine:3.23.3
 RUN apk add --no-cache ca-certificates
