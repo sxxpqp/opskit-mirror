@@ -79,24 +79,33 @@
 
   <!-- 主要内容 -->
   <main class="flex-grow container mx-auto px-4 py-8">
-    <!-- 搜索结果 -->
-    <section id="search-results" class="bg-white rounded-xl shadow-custom p-6 mb-10 hidden">
-      <div class="flex items-center justify-between mb-4">
-        <h2 class="text-xl font-bold text-primary flex items-center">
-          <i class="fa fa-search mr-2"></i> 搜索结果
-        </h2>
-        <button id="close-search" class="text-gray-400 hover:text-gray-600 transition-custom">
-          <i class="fa fa-times text-lg"></i>
-        </button>
+    <!-- 搜索弹窗 -->
+    <div id="search-overlay" class="fixed inset-0 z-40 hidden" style="top: 0;">
+      <div class="absolute inset-0 bg-black/50" id="search-backdrop"></div>
+      <div class="relative z-10 flex flex-col h-full max-w-2xl mx-auto bg-white shadow-2xl">
+        <div class="flex items-center gap-3 p-4 border-b border-gray-200">
+          <i class="fa fa-search text-primary text-lg"></i>
+          <input id="search-input-modal" type="text" placeholder="搜索 Docker 镜像，如 nginx、redis、golang..."
+            class="flex-1 px-0 py-2 text-lg outline-none border-none" />
+          <button id="search-btn-modal"
+            class="bg-primary text-white px-5 py-2 rounded-lg hover:bg-primary/90 transition-custom font-medium text-sm"><i
+              class="fa fa-search mr-1"></i> 搜索</button>
+          <button id="close-search-overlay" class="text-gray-400 hover:text-gray-600 transition-custom p-1"><i
+              class="fa fa-times text-xl"></i></button>
+        </div>
+        <div class="flex-1 overflow-y-auto p-4">
+          <div id="search-results-list" class="space-y-2"></div>
+          <p id="search-empty" class="text-gray-400 text-center py-16 hidden"><i
+              class="fa fa-search text-4xl mb-3 block"></i>未找到相关镜像，请尝试其他关键词</p>
+          <p id="search-error" class="text-danger text-center py-16 hidden"><i
+              class="fa fa-exclamation-circle text-4xl mb-3 block"></i>搜索失败，请稍后重试</p>
+          <div id="search-loading" class="text-center py-16 hidden"><i
+              class="fa fa-spinner fa-spin text-primary text-3xl"></i>
+            <p class="text-gray-400 mt-3">搜索中...</p>
+          </div>
+        </div>
       </div>
-      <div id="search-results-list" class="space-y-3"></div>
-      <p id="search-empty" class="text-gray-400 text-center py-8 hidden">未找到相关镜像，请尝试其他关键词</p>
-      <p id="search-error" class="text-danger text-center py-8 hidden">搜索失败，请稍后重试</p>
-      <div id="search-loading" class="text-center py-8 hidden">
-        <i class="fa fa-spinner fa-spin text-primary text-2xl"></i>
-        <p class="text-gray-400 mt-2">搜索中...</p>
-      </div>
-    </section>
+    </div>
 
     <!-- 加速源信息 -->
     <section class="bg-white rounded-xl shadow-custom p-6 mb-10">
@@ -462,24 +471,40 @@ sudo systemctl restart docker</code></pre>
 
     // —— 6. 搜索功能 ——
     function initSearch() {
-      const input = document.getElementById("search-input");
-      const btn = document.getElementById("search-btn");
-      const results = document.getElementById("search-results");
-      const list = document.getElementById("search-results-list");
-      const empty = document.getElementById("search-empty");
-      const error = document.getElementById("search-error");
-      const loading = document.getElementById("search-loading");
-      const close = document.getElementById("close-search");
+      var headerInput = document.getElementById("search-input");
+      var headerBtn = document.getElementById("search-btn");
+      var overlay = document.getElementById("search-overlay");
+      var backdrop = document.getElementById("search-backdrop");
+      var modalInput = document.getElementById("search-input-modal");
+      var modalBtn = document.getElementById("search-btn-modal");
+      var closeBtn = document.getElementById("close-search-overlay");
+      var list = document.getElementById("search-results-list");
+      var empty = document.getElementById("search-empty");
+      var error = document.getElementById("search-error");
+      var loading = document.getElementById("search-loading");
 
       function showState(state) {
         [list, empty, error, loading].forEach(function (el) { el.classList.add("hidden"); });
         if (state) state.classList.remove("hidden");
       }
 
-      function doSearch() {
-        var q = input.value.trim();
-        if (!q) return;
-        results.classList.remove("hidden");
+      function openOverlay() {
+        var q = headerInput.value.trim();
+        modalInput.value = q;
+        overlay.classList.remove("hidden");
+        document.body.style.overflow = "hidden";
+        modalInput.focus();
+        if (q) doSearch(q);
+      }
+
+      function closeOverlay() {
+        overlay.classList.add("hidden");
+        document.body.style.overflow = "";
+        showState(null);
+        list.innerHTML = "";
+      }
+
+      function doSearch(q) {
         showState(loading);
         fetch("/search?q=" + encodeURIComponent(q))
           .then(function (resp) {
@@ -496,28 +521,64 @@ sudo systemctl restart docker</code></pre>
               var name = item.name || item.slug || "";
               var desc = item.short_description || item.description || "";
               var stars = item.star_count || item.pull_count || 0;
-              var official = item.is_official ? '<span class="bg-primary text-white text-xs px-1.5 py-0.5 rounded ml-2">官方</span>' : "";
-              return '<a href="https://hub.docker.com/_/' + name + '" target="_blank" class="block p-3 rounded-lg border border-gray-200 hover:border-primary/50 hover:shadow-sm transition-custom">' +
-                '<div class="flex items-center justify-between">' +
-                '<span class="font-mono font-semibold text-dark">' + name + official + '</span>' +
-                '<span class="text-gray-400 text-xs"><i class="fa fa-star mr-1"></i>' + stars.toLocaleString() + '</span>' +
+              var official = item.is_official ? '<span class="bg-primary text-white text-xs px-1.5 py-0.5 rounded ml-1.5">Official</span>' : "";
+              var parts = name.split("/");
+              var hubUrl = parts[0] === "library" && parts.length === 2
+                ? "https://hub.docker.com/_/" + parts[1]
+                : "https://hub.docker.com/r/" + name;
+              var pullCmd = "docker pull " + name;
+              return '<div class="flex items-center justify-between p-3 rounded-lg border border-gray-100 hover:border-primary/30 hover:bg-gray-50 transition-custom">' +
+                '<div class="flex-1 min-w-0">' +
+                '<a href="' + hubUrl + '" target="_blank" class="font-mono font-semibold text-dark hover:text-primary">' + name + official + '</a>' +
+                (desc ? '<p class="text-gray-500 text-sm mt-0.5 truncate">' + desc + '</p>' : '') +
                 '</div>' +
-                (desc ? '<p class="text-gray-500 text-sm mt-1 truncate">' + desc + '</p>' : '') +
-                '</a>';
+                '<div class="flex items-center gap-3 ml-3 shrink-0">' +
+                '<span class="text-gray-400 text-xs whitespace-nowrap"><i class="fa fa-star mr-1"></i>' + stars.toLocaleString() + '</span>' +
+                '<button class="copy-pull-btn bg-gray-100 hover:bg-primary hover:text-white text-gray-600 px-2.5 py-1 rounded text-xs font-mono transition-custom" data-copy="' + pullCmd.replace(/"/g, '&quot;') + '" title="复制 docker pull 命令"><i class="fa fa-clipboard mr-1"></i>Pull</button>' +
+                '</div>' +
+                '</div>';
             }).join("");
             showState(list);
+            list.querySelectorAll(".copy-pull-btn").forEach(function (btn) {
+              btn.addEventListener("click", function (e) {
+                e.preventDefault();
+                e.stopPropagation();
+                var cmd = this.getAttribute("data-copy");
+                navigator.clipboard.writeText(cmd).then(function () {
+                  showToast("已复制: " + cmd);
+                }).catch(function () {
+                  showToast("复制失败，请手动复制", true);
+                });
+              });
+            });
           })
           .catch(function () {
             showState(error);
           });
       }
 
-      btn.addEventListener("click", doSearch);
-      input.addEventListener("keydown", function (e) {
-        if (e.key === "Enter") doSearch();
+      headerBtn.addEventListener("click", openOverlay);
+      headerInput.addEventListener("keydown", function (e) {
+        if (e.key === "Enter") openOverlay();
       });
-      close.addEventListener("click", function () {
-        results.classList.add("hidden");
+      headerInput.addEventListener("focus", function () {
+        openOverlay();
+      });
+      modalBtn.addEventListener("click", function () {
+        var q = modalInput.value.trim();
+        if (q) doSearch(q);
+      });
+      modalInput.addEventListener("keydown", function (e) {
+        if (e.key === "Enter") {
+          var q = modalInput.value.trim();
+          if (q) doSearch(q);
+        }
+        if (e.key === "Escape") closeOverlay();
+      });
+      closeBtn.addEventListener("click", closeOverlay);
+      backdrop.addEventListener("click", closeOverlay);
+      document.addEventListener("keydown", function (e) {
+        if (e.key === "Escape" && !overlay.classList.contains("hidden")) closeOverlay();
       });
     }
   </script>
