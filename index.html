@@ -1,14 +1,12 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
+
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Docker镜像加速配置指南</title>
   <script src="https://cdn.tailwindcss.com"></script>
-  <link
-    href="https://cdn.jsdelivr.net/npm/font-awesome@4.7.0/css/font-awesome.min.css"
-    rel="stylesheet"
-  />
+  <link href="https://cdn.jsdelivr.net/npm/font-awesome@4.7.0/css/font-awesome.min.css" rel="stylesheet" />
   <script>
     tailwind.config = {
       theme: {
@@ -56,30 +54,50 @@
     }
   </style>
 </head>
+
 <body class="bg-light text-dark font-sans min-h-screen flex flex-col">
   <!-- 头部 -->
   <header class="bg-white shadow-custom sticky top-0 z-50">
     <div class="container mx-auto px-4 py-6">
-      <h1
-        class="text-[clamp(1.8rem,4vw,2.5rem)] font-bold text-primary flex items-center"
-      >
+      <h1 class="text-[clamp(1.8rem,4vw,2.5rem)] font-bold text-primary flex items-center">
         <i class="fa fa-docker text-2xl mr-3"></i>
         Docker镜像加速配置指南
       </h1>
       <p class="text-gray-600 mt-2 max-w-2xl">
-        自动识别当前访问域名，一键配置Docker镜像加速，大幅提升拉取速度 <br>
-        <strong>搜索镜像地址:</strong> 
-  <a href="https://search.ihome.sxxpqp.top:8443/" 
-     target="_blank" 
-     class="font-bold text-blue-600 hover:text-blue-800 underline decoration-2 underline-offset-4 ml-1">
-    https://search.ihome.sxxpqp.top:8443/
-  </a>
+        自动识别当前访问域名，一键配置Docker镜像加速，大幅提升拉取速度
       </p>
+      <div class="mt-4 flex gap-2 max-w-xl">
+        <input id="search-input" type="text" placeholder="搜索 Docker 镜像，如 nginx、redis、golang..."
+          class="flex-1 px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition-custom text-sm" />
+        <button id="search-btn"
+          class="bg-primary text-white px-5 py-2.5 rounded-lg hover:bg-primary/90 transition-custom font-medium text-sm whitespace-nowrap">
+          <i class="fa fa-search mr-1"></i> 搜索
+        </button>
+      </div>
     </div>
   </header>
 
   <!-- 主要内容 -->
   <main class="flex-grow container mx-auto px-4 py-8">
+    <!-- 搜索结果 -->
+    <section id="search-results" class="bg-white rounded-xl shadow-custom p-6 mb-10 hidden">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-xl font-bold text-primary flex items-center">
+          <i class="fa fa-search mr-2"></i> 搜索结果
+        </h2>
+        <button id="close-search" class="text-gray-400 hover:text-gray-600 transition-custom">
+          <i class="fa fa-times text-lg"></i>
+        </button>
+      </div>
+      <div id="search-results-list" class="space-y-3"></div>
+      <p id="search-empty" class="text-gray-400 text-center py-8 hidden">未找到相关镜像，请尝试其他关键词</p>
+      <p id="search-error" class="text-danger text-center py-8 hidden">搜索失败，请稍后重试</p>
+      <div id="search-loading" class="text-center py-8 hidden">
+        <i class="fa fa-spinner fa-spin text-primary text-2xl"></i>
+        <p class="text-gray-400 mt-2">搜索中...</p>
+      </div>
+    </section>
+
     <!-- 加速源信息 -->
     <section class="bg-white rounded-xl shadow-custom p-6 mb-10">
       <h2 class="text-xl font-bold text-primary mb-4 flex items-center">
@@ -88,18 +106,11 @@
       <p class="text-gray-600 mb-4">
         系统已根据当前访问域名生成加速源地址，以下配置将自动填充该地址：
       </p>
-      <div
-        class="code-block bg-gray-50 p-4 rounded-lg font-mono section-hover"
-      >
-        <span
-          id="accelerator-address"
-          class="text-lg font-semibold dynamic-link"
-          >https://dhdhd.dockerhub.sxxpqp.top/</span
-        >
-        <button
-          class="copy-btn bg-primary text-white px-3 py-1 rounded text-sm hover:bg-primary/90"
-          id="copy-accelerator"
-        >
+      <div class="code-block bg-gray-50 p-4 rounded-lg font-mono section-hover">
+        <span id="accelerator-address"
+          class="text-lg font-semibold dynamic-link">https://dhdhd.dockerhub.sxxpqp.top/</span>
+        <button class="copy-btn bg-primary text-white px-3 py-1 rounded text-sm hover:bg-primary/90"
+          id="copy-accelerator">
           <i class="fa fa-copy mr-1"></i> 复制地址
         </button>
       </div>
@@ -126,9 +137,7 @@
           </p>
           <div class="code-block bg-gray-50 p-4 rounded-lg font-mono mt-2">
             <pre><code>sudo vi /etc/docker/daemon.json</code></pre>
-            <button
-              class="copy-btn bg-primary text-white px-3 py-1 rounded text-sm hover:bg-primary/90"
-            >
+            <button class="copy-btn bg-primary text-white px-3 py-1 rounded text-sm hover:bg-primary/90">
               <i class="fa fa-copy mr-1"></i> 复制命令
             </button>
           </div>
@@ -146,9 +155,7 @@
             <pre><code>{
   "registry-mirrors": ["<span class="dynamic-link">https://dhdhd.dockerhub.sxxpqp.top/</span>"]
 }</code></pre>
-            <button
-              class="copy-btn bg-primary text-white px-3 py-1 rounded text-sm hover:bg-primary/90"
-            >
+            <button class="copy-btn bg-primary text-white px-3 py-1 rounded text-sm hover:bg-primary/90">
               <i class="fa fa-copy mr-1"></i> 复制配置
             </button>
           </div>
@@ -165,9 +172,7 @@
           <div class="code-block bg-gray-50 p-4 rounded-lg font-mono mt-2">
             <pre><code>sudo systemctl daemon-reload
 sudo systemctl restart docker</code></pre>
-            <button
-              class="copy-btn bg-primary text-white px-3 py-1 rounded text-sm hover:bg-primary/90"
-            >
+            <button class="copy-btn bg-primary text-white px-3 py-1 rounded text-sm hover:bg-primary/90">
               <i class="fa fa-copy mr-1"></i> 复制命令
             </button>
           </div>
@@ -183,9 +188,7 @@ sudo systemctl restart docker</code></pre>
           </p>
           <div class="code-block bg-gray-50 p-4 rounded-lg font-mono mt-2">
             <pre><code>docker run hello-world</code></pre>
-            <button
-              class="copy-btn bg-primary text-white px-3 py-1 rounded text-sm hover:bg-primary/90"
-            >
+            <button class="copy-btn bg-primary text-white px-3 py-1 rounded text-sm hover:bg-primary/90">
               <i class="fa fa-copy mr-1"></i> 复制命令
             </button>
           </div>
@@ -212,11 +215,8 @@ sudo systemctl restart docker</code></pre>
             启动Docker Desktop，点击右上角状态栏图标，选择"Settings"：
           </p>
           <div class="flex justify-center mt-2">
-            <img
-              src="https://picsum.photos/400/200?random=101"
-              alt="Docker Desktop设置入口"
-              class="rounded-lg shadow-md max-w-full"
-            />
+            <img src="https://picsum.photos/400/200?random=101" alt="Docker Desktop设置入口"
+              class="rounded-lg shadow-md max-w-full" />
           </div>
         </div>
 
@@ -235,9 +235,7 @@ sudo systemctl restart docker</code></pre>
     "<span class="dynamic-link">https://dhdhd.dockerhub.sxxpqp.top/</span>"
   ]
 }</code></pre>
-            <button
-              class="copy-btn bg-primary text-white px-3 py-1 rounded text-sm hover:bg-primary/90"
-            >
+            <button class="copy-btn bg-primary text-white px-3 py-1 rounded text-sm hover:bg-primary/90">
               <i class="fa fa-copy mr-1"></i> 复制配置
             </button>
           </div>
@@ -252,11 +250,7 @@ sudo systemctl restart docker</code></pre>
             点击"Apply & Restart"按钮，Docker会自动保存配置并重启：
           </p>
           <div class="flex justify-center mt-2">
-            <img
-              src="https://picsum.photos/400/200?random=102"
-              alt="应用并重启按钮"
-              class="rounded-lg shadow-md max-w-full"
-            />
+            <img src="https://picsum.photos/400/200?random=102" alt="应用并重启按钮" class="rounded-lg shadow-md max-w-full" />
           </div>
         </div>
 
@@ -270,9 +264,7 @@ sudo systemctl restart docker</code></pre>
           </p>
           <div class="code-block bg-gray-50 p-4 rounded-lg font-mono mt-2">
             <pre><code>docker run hello-world</code></pre>
-            <button
-              class="copy-btn bg-primary text-white px-3 py-1 rounded text-sm hover:bg-primary/90"
-            >
+            <button class="copy-btn bg-primary text-white px-3 py-1 rounded text-sm hover:bg-primary/90">
               <i class="fa fa-copy mr-1"></i> 复制命令
             </button>
           </div>
@@ -329,9 +321,7 @@ sudo systemctl restart docker</code></pre>
           </h3>
           <p class="text-gray-600">提升镜像拉取速度的进阶配置：</p>
 
-          <div
-            class="code-block bg-gray-50 p-3 rounded-lg font-mono mt-2"
-          >
+          <div class="code-block bg-gray-50 p-3 rounded-lg font-mono mt-2">
             <pre><code>{
   "registry-mirrors": [
     "<span class="dynamic-link">https://dhdhd.dockerhub.sxxpqp.top/</span>"
@@ -340,9 +330,7 @@ sudo systemctl restart docker</code></pre>
   "max-concurrent-downloads": 10,
   "data-root": "/ssd/docker"
 }</code></pre>
-            <button
-              class="copy-btn bg-primary text-white px-3 py-1 rounded text-sm hover:bg-primary/90"
-            >
+            <button class="copy-btn bg-primary text-white px-3 py-1 rounded text-sm hover:bg-primary/90">
               <i class="fa fa-copy mr-1"></i> 复制配置
             </button>
           </div>
@@ -378,22 +366,13 @@ sudo systemctl restart docker</code></pre>
           <p class="text-gray-400">基于域名自动识别的智能加速方案，适配多环境部署</p>
         </div>
         <div class="flex space-x-4">
-          <a
-            href="https://www.sxxpqp.top"
-            class="text-gray-400 hover:text-white transition-custom "
-          >
+          <a href="https://www.sxxpqp.top" class="text-gray-400 hover:text-white transition-custom ">
             <i class="fa fa-home mr-1"></i> 博客主页
           </a>
-          <a
-            href="https://www.sxxpqp.top/about"
-            class="text-gray-400 hover:text-white transition-custom"
-          >
+          <a href="https://www.sxxpqp.top/about" class="text-gray-400 hover:text-white transition-custom">
             <i class="fa fa-question-circle mr-1"></i> 常见问题
           </a>
-          <a
-            href="https://www.sxxpqp.top/about"
-            class="text-gray-400 hover:text-white transition-custom"
-          >
+          <a href="https://www.sxxpqp.top/about" class="text-gray-400 hover:text-white transition-custom">
             <i class="fa fa-envelope mr-1"></i> 技术支持
           </a>
         </div>
@@ -405,10 +384,8 @@ sudo systemctl restart docker</code></pre>
   </footer>
 
   <!-- 复制成功提示 -->
-  <div
-    id="copy-toast"
-    class="fixed bottom-4 right-4 bg-success text-white px-4 py-2 rounded-lg shadow-lg opacity-0 transition-opacity duration-300 flex items-center z-50"
-  >
+  <div id="copy-toast"
+    class="fixed bottom-4 right-4 bg-success text-white px-4 py-2 rounded-lg shadow-lg opacity-0 transition-opacity duration-300 flex items-center z-50">
     <i class="fa fa-check mr-2"></i>
     <span id="toast-message">复制成功！加速源地址已保存到剪贴板</span>
   </div>
@@ -474,14 +451,76 @@ sudo systemctl restart docker</code></pre>
     // —— 5. 页面加载完毕后依次执行 —— 
     document.addEventListener("DOMContentLoaded", () => {
       updateDynamicLinks();
-      // 特殊按钮：一键复制加速源地址
       const accelBtn = document.getElementById("copy-accelerator");
       if (accelBtn) {
         accelBtn.setAttribute("data-clipboard-text", location.href);
       }
       initCopyButtonText();
       initCopyFunctionality();
+      initSearch();
     });
+
+    // —— 6. 搜索功能 ——
+    function initSearch() {
+      const input = document.getElementById("search-input");
+      const btn = document.getElementById("search-btn");
+      const results = document.getElementById("search-results");
+      const list = document.getElementById("search-results-list");
+      const empty = document.getElementById("search-empty");
+      const error = document.getElementById("search-error");
+      const loading = document.getElementById("search-loading");
+      const close = document.getElementById("close-search");
+
+      function showState(state) {
+        [list, empty, error, loading].forEach(function (el) { el.classList.add("hidden"); });
+        if (state) state.classList.remove("hidden");
+      }
+
+      function doSearch() {
+        var q = input.value.trim();
+        if (!q) return;
+        results.classList.remove("hidden");
+        showState(loading);
+        fetch("/search?q=" + encodeURIComponent(q))
+          .then(function (resp) {
+            if (!resp.ok) throw new Error("search failed");
+            return resp.json();
+          })
+          .then(function (data) {
+            var items = data.results || data.summaries || [];
+            if (items.length === 0) {
+              showState(empty);
+              return;
+            }
+            list.innerHTML = items.map(function (item) {
+              var name = item.name || item.slug || "";
+              var desc = item.short_description || item.description || "";
+              var stars = item.star_count || item.pull_count || 0;
+              var official = item.is_official ? '<span class="bg-primary text-white text-xs px-1.5 py-0.5 rounded ml-2">官方</span>' : "";
+              return '<a href="https://hub.docker.com/_/' + name + '" target="_blank" class="block p-3 rounded-lg border border-gray-200 hover:border-primary/50 hover:shadow-sm transition-custom">' +
+                '<div class="flex items-center justify-between">' +
+                '<span class="font-mono font-semibold text-dark">' + name + official + '</span>' +
+                '<span class="text-gray-400 text-xs"><i class="fa fa-star mr-1"></i>' + stars.toLocaleString() + '</span>' +
+                '</div>' +
+                (desc ? '<p class="text-gray-500 text-sm mt-1 truncate">' + desc + '</p>' : '') +
+                '</a>';
+            }).join("");
+            showState(list);
+          })
+          .catch(function () {
+            showState(error);
+          });
+      }
+
+      btn.addEventListener("click", doSearch);
+      input.addEventListener("keydown", function (e) {
+        if (e.key === "Enter") doSearch();
+      });
+      close.addEventListener("click", function () {
+        results.classList.add("hidden");
+      });
+    }
   </script>
 </body>
+
 </html>
