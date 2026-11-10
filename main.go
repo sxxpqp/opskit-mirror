@@ -6,7 +6,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"log"
 	"log/slog"
 	"net/http"
@@ -56,10 +55,6 @@ func (m *mirror) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == "/" || r.URL.Path == "/index.html" {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Write(indexHTML)
-		return
-	}
-	if r.URL.Path == "/search" {
-		m.handleSearch(w, r)
 		return
 	}
 	if r.Method != "GET" && r.Method != "HEAD" {
@@ -244,46 +239,6 @@ func (m *mirror) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 	proxy.ServeHTTP(w, r)
-}
-
-var searchClient = &http.Client{
-	Transport: &http.Transport{
-		ForceAttemptHTTP2:     true,
-		IdleConnTimeout:       90 * time.Second,
-		TLSHandshakeTimeout:   10 * time.Second,
-		ResponseHeaderTimeout: 15 * time.Second,
-	},
-	Timeout: 10 * time.Second,
-}
-
-func (m *mirror) handleSearch(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		return
-	}
-	q := strings.TrimSpace(r.URL.Query().Get("q"))
-	if q == "" {
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		w.Write([]byte(`{"count":0,"results":[]}`))
-		return
-	}
-	searchURL := "https://hub.docker.com/v2/search/repositories/?query=" + url.QueryEscape(q) + "&page=1&page_size=20"
-	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, searchURL, nil)
-	if err != nil {
-		http.Error(w, "search request failed", http.StatusBadGateway)
-		return
-	}
-	req.Header.Set("Accept", "application/json")
-	resp, err := searchClient.Do(req)
-	if err != nil {
-		slog.Error("search_upstream_failed", "query", q, "error", err)
-		http.Error(w, "search upstream unavailable", http.StatusBadGateway)
-		return
-	}
-	defer resp.Body.Close()
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body)
 }
 
 func main() {
